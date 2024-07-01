@@ -7,17 +7,18 @@ public class OpponentController : MonoBehaviour
     public NavMeshAgent agent;
     [SerializeField] float moveSpeed = 5f;
     [SerializeField] List<float> waypointsZ;
+    [SerializeField] float destZ = 100;
+    [SerializeField] public Animator animator;
 
     private Vector3 destination;
-    private Animator animator;
     private int currentWaypoint = 0;
     private bool isFinished = false;
 
     void Start()
     {
-        animator = GetComponent<Animator>();
+        //animator = GetComponent<Animator>();
         animator.SetBool("isRunning", true);
-        destination = new Vector3(Random.Range(-9f, 9f), transform.position.y, 305);
+        destination = new Vector3(Random.Range(-9f, 9f), transform.position.y, destZ);
         agent.SetDestination(destination);
     }
 
@@ -36,7 +37,7 @@ public class OpponentController : MonoBehaviour
             currentWaypoint++;
             if (currentWaypoint == waypointsZ.Count)
             {
-                animator.SetBool("isRunning", false);
+                //animator.SetBool("isWaving", true);
                 isFinished = true;
             }
         }

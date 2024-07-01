@@ -21,7 +21,8 @@ public class FinishLine : MonoBehaviour
         if (other.gameObject.CompareTag("Player"))
         {
             player.GetComponent<PlayerController>().enabled = false;
-            player.GetComponent<Animator>().SetBool("isRunning", false);
+            player.GetComponent<PlayerController>().animator.SetBool("isRunning", false);
+            player.GetComponent<PlayerController>().animator.SetBool("isWaving", true);
 
             camera.GetComponent<CameraMovement>().enabled = false;
             camera.GetComponent<CameraSwitch>().enabled = true;
@@ -33,7 +34,8 @@ public class FinishLine : MonoBehaviour
         else if (other.gameObject.CompareTag("Opponent"))
         {
             other.GetComponent<OpponentController>().enabled = false;
-            other.GetComponent<Animator>().SetBool("isRunning", false);
+            other.GetComponent<OpponentController>().animator.SetBool("isRunning", false);
+            other.GetComponent<OpponentController>().animator.SetBool("isWaving", true);
             other.GetComponent<OpponentController>().agent.Stop();
         }
     }

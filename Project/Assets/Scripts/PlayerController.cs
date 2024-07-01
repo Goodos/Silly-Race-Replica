@@ -3,16 +3,16 @@
 public class PlayerController : MonoBehaviour
 {
     [SerializeField] float moveSpeed = 5f;
+    [SerializeField] public Animator animator;
 
     private Vector3 pointA;
     private Vector3 pointB;
     private bool touchStart = false;
 
-    private Animator animator;
-
     void Start()
     {
-        animator = GetComponent<Animator>();
+        //animator = GetComponent<Animator>();
+        //animator.SetBool("isRunning", false);
     }
 
     void Update()
@@ -51,7 +51,7 @@ public class PlayerController : MonoBehaviour
         }
         else
         {
-            animator.SetBool("isRunning", false);
+            //animator.SetBool("isWawing", true);
         }
 
         float newXPos = Mathf.Clamp(transform.position.x, -9f, 9f); // clamping the x value to prevent falling, [-9, 9] boundaries

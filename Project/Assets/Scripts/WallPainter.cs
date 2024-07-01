@@ -1,5 +1,6 @@
 ﻿using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.SceneManagement;
 
 public class WallPainter : MonoBehaviour
 {
@@ -9,6 +10,7 @@ public class WallPainter : MonoBehaviour
     [SerializeField] Text progressText;
     [SerializeField] Text congratsText;
     [SerializeField] Text infoText;
+    [SerializeField] Button nxtLvlBtn;
 
     private Renderer renderer;
     private Texture2D texture;
@@ -22,6 +24,15 @@ public class WallPainter : MonoBehaviour
         texture = Instantiate(renderer.material.mainTexture) as Texture2D;
         renderer.material.mainTexture = texture;
         rSquared = brushRadius * brushRadius;
+        nxtLvlBtn.onClick.AddListener(NextLevel);
+    }
+
+    private void NextLevel()
+    {
+        if (SceneManager.GetActiveScene().name == "level1")
+            SceneManager.LoadScene("level2");
+        else
+            SceneManager.LoadScene("level1");
     }
 
     void Update()
@@ -76,5 +87,6 @@ public class WallPainter : MonoBehaviour
         congratsText.enabled = true;
         Camera.main.GetComponent<FinishCameraSwitch>().enabled = true;
         paintProgress.gameObject.SetActive(false);
+        nxtLvlBtn.gameObject.SetActive(true);
     }
 }
