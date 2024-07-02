@@ -5,7 +5,7 @@
 
 #import "MAUnityAdManager.h"
 
-#define VERSION @"6.5.2"
+#define VERSION @"6.1.2"
 
 #define KEY_WINDOW [UIApplication sharedApplication].keyWindow
 #define DEVICE_SPECIFIC_ADVIEW_AD_FORMAT ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad) ? MAAdFormat.leader : MAAdFormat.banner
@@ -21,8 +21,8 @@ extern "C" {
     UIWindow* UnityGetMainWindow(void);
     
     // life cycle management
-    int UnityIsPaused(void);
     void UnityPause(int pause);
+    void UnitySendMessage(const char* obj, const char* method, const char* msg);
     
     void max_unity_dispatch_on_main_thread(dispatch_block_t block)
     {
@@ -59,6 +59,8 @@ extern "C" {
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSString *> *adViewPositions;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSValue *> *adViewOffsets;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *adViewWidths;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *crossPromoAdViewHeights;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *crossPromoAdViewRotations;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, MAAdFormat *> *verticalAdViewFormats;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSArray<NSLayoutConstraint *> *> *adViewConstraints;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSString *> *> *adViewExtraParametersToSetAfterCreate;
@@ -72,9 +74,6 @@ extern "C" {
 
 @property (nonatomic, strong) NSMutableDictionary<NSString *, MAAd *> *adInfoDict;
 @property (nonatomic, strong) NSObject *adInfoDictLock;
-
-@property (nonatomic, strong) NSOperationQueue *backgroundCallbackEventsQueue;
-@property (nonatomic, assign) BOOL resumeUnityAfterApplicationBecomesActive;
 
 @end
 
@@ -118,6 +117,8 @@ static ALUnityBackgroundCallback backgroundCallback;
         self.adViewPositions = [NSMutableDictionary dictionaryWithCapacity: 2];
         self.adViewOffsets = [NSMutableDictionary dictionaryWithCapacity: 2];
         self.adViewWidths = [NSMutableDictionary dictionaryWithCapacity: 2];
+        self.crossPromoAdViewHeights = [NSMutableDictionary dictionaryWithCapacity: 2];
+        self.crossPromoAdViewRotations = [NSMutableDictionary dictionaryWithCapacity: 2];
         self.verticalAdViewFormats = [NSMutableDictionary dictionaryWithCapacity: 2];
         self.adViewConstraints = [NSMutableDictionary dictionaryWithCapacity: 2];
         self.adViewExtraParametersToSetAfterCreate = [NSMutableDictionary dictionaryWithCapacity: 1];
@@ -128,9 +129,6 @@ static ALUnityBackgroundCallback backgroundCallback;
         self.disabledAutoRefreshAdViewAdUnitIdentifiers = [NSMutableSet setWithCapacity: 2];
         self.adInfoDict = [NSMutableDictionary dictionary];
         self.adInfoDictLock = [[NSObject alloc] init];
-        
-        self.backgroundCallbackEventsQueue = [[NSOperationQueue alloc] init];
-        self.backgroundCallbackEventsQueue.maxConcurrentOperationCount = 1;
         
         max_unity_dispatch_on_main_thread(^{
             self.safeAreaBackground = [[UIView alloc] init];
@@ -153,31 +151,6 @@ static ALUnityBackgroundCallback backgroundCallback;
             {
                 [self positionAdViewForAdUnitIdentifier: adUnitIdentifier adFormat: self.verticalAdViewFormats[adUnitIdentifier]];
             }
-        }];
-        
-        [[NSNotificationCenter defaultCenter] addObserver: self
-                                                 selector: @selector(applicationPaused:)
-                                                     name: UIApplicationDidEnterBackgroundNotification
-                                                   object: nil];
-        
-        [[NSNotificationCenter defaultCenter] addObserver: self
-                                                 selector: @selector(applicationResumed:)
-                                                     name: UIApplicationDidBecomeActiveNotification
-                                                   object: nil];
-        
-        [[NSNotificationCenter defaultCenter] addObserverForName: UIApplicationDidBecomeActiveNotification
-                                                          object: nil
-                                                           queue: [NSOperationQueue mainQueue]
-                                                      usingBlock:^(NSNotification *notification) {
-            
-#if !IS_TEST_APP
-            if ( self.resumeUnityAfterApplicationBecomesActive && UnityIsPaused() )
-            {
-                UnityPause(NO);
-            }
-#endif
-            
-            self.backgroundCallbackEventsQueue.suspended = NO;
         }];
     }
     return self;
@@ -215,21 +188,19 @@ static ALUnityBackgroundCallback backgroundCallback;
     self.sdk.mediationProvider = @"max";
     [self.sdk initializeSdkWithCompletionHandler:^(ALSdkConfiguration *configuration)
      {
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-            // Note: internal state should be updated first
-            completionHandler( configuration );
-            
-            NSString *consentFlowUserGeographyStr = @(configuration.consentFlowUserGeography).stringValue;
-            NSString *consentDialogStateStr = @(configuration.consentDialogState).stringValue;
-            NSString *appTrackingStatus = @(configuration.appTrackingTransparencyStatus).stringValue; // Deliberately name it `appTrackingStatus` to be a bit more generic (in case Android introduces a similar concept)
-            [self forwardUnityEventWithArgs: @{@"name" : @"OnSdkInitializedEvent",
-                                               @"consentFlowUserGeography" : consentFlowUserGeographyStr,
-                                               @"consentDialogState" : consentDialogStateStr,
-                                               @"countryCode" : configuration.countryCode,
-                                               @"appTrackingStatus" : appTrackingStatus,
-                                               @"isSuccessfullyInitialized" : @([self.sdk isInitialized]),
-                                               @"isTestModeEnabled" : @([configuration isTestModeEnabled])}];
-        });
+        // Note: internal state should be updated first
+        completionHandler( configuration );
+        
+        NSString *consentFlowUserGeographyStr = @(configuration.consentFlowUserGeography).stringValue;
+        NSString *consentDialogStateStr = @(configuration.consentDialogState).stringValue;
+        NSString *appTrackingStatus = @(configuration.appTrackingTransparencyStatus).stringValue; // Deliberately name it `appTrackingStatus` to be a bit more generic (in case Android introduces a similar concept)
+        [MAUnityAdManager forwardUnityEventWithArgs: @{@"name" : @"OnSdkInitializedEvent",
+                                                       @"consentFlowUserGeography" : consentFlowUserGeographyStr,
+                                                       @"consentDialogState" : consentDialogStateStr,
+                                                       @"countryCode" : configuration.countryCode,
+                                                       @"appTrackingStatus" : appTrackingStatus,
+                                                       @"isSuccessfullyInitialized" : @([self.sdk isInitialized]),
+                                                       @"isTestModeEnabled" : @([configuration isTestModeEnabled])}];
     }];
     
     return self.sdk;
@@ -247,7 +218,7 @@ static ALUnityBackgroundCallback backgroundCallback;
     [self createAdViewWithAdUnitIdentifier: adUnitIdentifier adFormat: [self adViewAdFormatForAdUnitIdentifier: adUnitIdentifier] atPosition: DEFAULT_AD_VIEW_POSITION withOffset: CGPointMake(xOffset, yOffset)];
 }
 
-- (void)loadBannerWithAdUnitIdentifier:(nullable NSString *)adUnitIdentifier
+- (void)loadBannerWithAdUnitIdentifier:(nullable NSString *)adUnitIdentifier 
 {
     [self loadAdViewWithAdUnitIdentifier: adUnitIdentifier adFormat: [self adViewAdFormatForAdUnitIdentifier: adUnitIdentifier]];
 }
@@ -416,6 +387,49 @@ static ALUnityBackgroundCallback backgroundCallback;
     return [self adViewLayoutForAdUnitIdentifier: adUnitIdentifier adFormat: MAAdFormat.mrec];
 }
 
+#pragma mark - Cross Promo Ads
+
+- (void)createCrossPromoAdWithAdUnitIdentifier:(nullable NSString *)adUnitIdentifier x:(CGFloat)xOffset y:(CGFloat)yOffset width:(CGFloat)width height:(CGFloat)height rotation:(CGFloat)rotation
+{
+    self.adViewWidths[adUnitIdentifier] = @(width);
+    self.crossPromoAdViewHeights[adUnitIdentifier] = @(height);
+    self.crossPromoAdViewRotations[adUnitIdentifier] = @(rotation);
+    [self createAdViewWithAdUnitIdentifier: adUnitIdentifier adFormat: MAAdFormat.crossPromo atPosition: DEFAULT_AD_VIEW_POSITION withOffset: CGPointMake(xOffset, yOffset)];
+}
+
+- (void)setCrossPromoAdPlacement:(nullable NSString *)placement forAdUnitIdentifier:(nullable NSString *)adUnitIdentifier
+{
+    [self setAdViewPlacement: placement forAdUnitIdentifier: adUnitIdentifier adFormat: MAAdFormat.crossPromo];
+}
+
+- (void)updateCrossPromoAdPositionForAdUnitIdentifier:(nullable NSString *)adUnitIdentifier x:(CGFloat)xOffset y:(CGFloat)yOffset width:(CGFloat)width height:(CGFloat)height rotation:(CGFloat)rotation
+{
+    self.adViewWidths[adUnitIdentifier] = @(width);
+    self.crossPromoAdViewHeights[adUnitIdentifier] = @(height);
+    self.crossPromoAdViewRotations[adUnitIdentifier] = @(rotation);
+    [self updateAdViewPosition: DEFAULT_AD_VIEW_POSITION withOffset: CGPointMake(xOffset, yOffset) forAdUnitIdentifier: adUnitIdentifier adFormat: MAAdFormat.crossPromo];
+}
+
+- (void)showCrossPromoAdWithAdUnitIdentifier:(nullable NSString *)adUnitIdentifier
+{
+    [self showAdViewWithAdUnitIdentifier: adUnitIdentifier adFormat: MAAdFormat.crossPromo];
+}
+
+- (void)destroyCrossPromoAdWithAdUnitIdentifier:(nullable NSString *)adUnitIdentifier
+{
+    [self destroyAdViewWithAdUnitIdentifier: adUnitIdentifier adFormat: MAAdFormat.crossPromo];
+}
+
+- (void)hideCrossPromoAdWithAdUnitIdentifier:(nullable NSString *)adUnitIdentifier
+{
+    [self hideAdViewWithAdUnitIdentifier: adUnitIdentifier adFormat: MAAdFormat.crossPromo];
+}
+
+- (NSString *)crossPromoAdLayoutForAdUnitIdentifier:(nullable NSString *)adUnitIdentifier
+{
+    return [self adViewLayoutForAdUnitIdentifier: adUnitIdentifier adFormat: MAAdFormat.crossPromo];
+}
+
 #pragma mark - Interstitials
 
 - (void)loadInterstitialWithAdUnitIdentifier:(nullable NSString *)adUnitIdentifier
@@ -580,7 +594,7 @@ static ALUnityBackgroundCallback backgroundCallback;
 
 - (NSString *)adInfoForAdUnitIdentifier:(nullable NSString *)adUnitIdentifier
 {
-    if ( ![adUnitIdentifier al_isValidString] ) return @"";
+    if ( [adUnitIdentifier al_isValidString] ) return @"";
     
     MAAd *ad = [self adWithAdUnitIdentifier: adUnitIdentifier];
     if ( !ad ) return @"";
@@ -599,7 +613,6 @@ static ALUnityBackgroundCallback backgroundCallback;
              @"revenue" : [@(ad.revenue) stringValue],
              @"revenuePrecision" : ad.revenuePrecision,
              @"waterfallInfo" : [self createAdWaterfallInfo: ad.waterfall],
-             @"latencyMillis" : [self requestLatencyMillisFromRequestLatency: ad.requestLatency],
              @"dspName" : ad.DSPName ?: @""};
 }
 
@@ -618,9 +631,11 @@ static ALUnityBackgroundCallback backgroundCallback;
     {
         [networkResponsesArray addObject: [self createNetworkResponseInfo: response]];
     }
-    
     waterfallInfoDict[@"networkResponses"] = networkResponsesArray;
-    waterfallInfoDict[@"latencyMillis"] = [self requestLatencyMillisFromRequestLatency: waterfallInfo.latency];
+    
+    // Convert latency from seconds to milliseconds to match Android.
+    long latencyMillis = waterfallInfo.latency * 1000;
+    waterfallInfoDict[@"latencyMillis"] = @(latencyMillis).stringValue;
     
     return waterfallInfoDict;
 }
@@ -653,12 +668,13 @@ static ALUnityBackgroundCallback backgroundCallback;
         errorObject[@"errorMessage"] = error.message;
         errorObject[@"adLoadFailure"] = error.adLoadFailureInfo;
         errorObject[@"errorCode"] = @(error.code).stringValue;
-        errorObject[@"latencyMillis"] = [self requestLatencyMillisFromRequestLatency: error.requestLatency];
         
         networkResponseDict[@"error"] = errorObject;
     }
     
-    networkResponseDict[@"latencyMillis"] = [self requestLatencyMillisFromRequestLatency: response.latency];
+    // Convert latency from seconds to milliseconds to match Android.
+    long latencySeconds = response.latency * 1000;
+    networkResponseDict[@"latencyMillis"] = @(latencySeconds).stringValue;
     
     return networkResponseDict;
 }
@@ -691,6 +707,10 @@ static ALUnityBackgroundCallback backgroundCallback;
         if ( MAAdFormat.mrec == adFormat )
         {
             name = @"OnMRecAdLoadedEvent";
+        }
+        else if ( MAAdFormat.crossPromo == adFormat )
+        {
+            name = @"OnCrossPromoAdLoadedEvent";
         }
         else
         {
@@ -727,117 +747,115 @@ static ALUnityBackgroundCallback backgroundCallback;
         return;
     }
     
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        
-        @synchronized ( self.adInfoDictLock )
-        {
-            self.adInfoDict[ad.adUnitIdentifier] = ad;
-        }
-        
-        NSDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
-        [self forwardUnityEventWithArgs: args];
-    });
+    @synchronized ( self.adInfoDictLock )
+    {
+        self.adInfoDict[ad.adUnitIdentifier] = ad;
+    }
+    
+    NSDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
+    [MAUnityAdManager forwardUnityEventWithArgs: args];
 }
 
 - (void)didFailToLoadAdForAdUnitIdentifier:(NSString *)adUnitIdentifier withError:(MAError *)error
 {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        
-        if ( !adUnitIdentifier )
+    if ( !adUnitIdentifier )
+    {
+        [self log: @"adUnitIdentifier cannot be nil from %@", [NSThread callStackSymbols]];
+        return;
+    }
+    
+    NSString *name;
+    if ( self.adViews[adUnitIdentifier] )
+    {
+        MAAdFormat *adFormat = self.adViewAdFormats[adUnitIdentifier];
+        if ( MAAdFormat.mrec == adFormat )
         {
-            [self log: @"adUnitIdentifier cannot be nil from %@", [NSThread callStackSymbols]];
-            return;
+            name = @"OnMRecAdLoadFailedEvent";
         }
-        
-        NSString *name;
-        if ( self.adViews[adUnitIdentifier] )
+        else if ( MAAdFormat.crossPromo == adFormat )
         {
-            MAAdFormat *adFormat = self.adViewAdFormats[adUnitIdentifier];
-            if ( MAAdFormat.mrec == adFormat )
-            {
-                name = @"OnMRecAdLoadFailedEvent";
-            }
-            else
-            {
-                name = @"OnBannerAdLoadFailedEvent";
-            }
-        }
-        else if ( self.interstitials[adUnitIdentifier] )
-        {
-            name = @"OnInterstitialLoadFailedEvent";
-        }
-        else if ( self.appOpenAds[adUnitIdentifier] )
-        {
-            name = @"OnAppOpenAdLoadFailedEvent";
-        }
-        else if ( self.rewardedAds[adUnitIdentifier] )
-        {
-            name = @"OnRewardedAdLoadFailedEvent";
-        }
-        else if ( self.rewardedInterstitialAds[adUnitIdentifier] )
-        {
-            name = @"OnRewardedInterstitialAdLoadFailedEvent";
+            name = @"OnCrossPromoAdLoadFailedEvent";
         }
         else
         {
-            [self log: @"invalid adUnitId from %@", [NSThread callStackSymbols]];
-            return;
+            name = @"OnBannerAdLoadFailedEvent";
         }
-        
-        @synchronized ( self.adInfoDictLock )
-        {
-            [self.adInfoDict removeObjectForKey: adUnitIdentifier];
-        }
-        
-        [self forwardUnityEventWithArgs: @{@"name" : name,
-                                           @"adUnitId" : adUnitIdentifier,
-                                           @"errorCode" : [@(error.code) stringValue],
-                                           @"errorMessage" : error.message,
-                                           @"waterfallInfo" : [self createAdWaterfallInfo: error.waterfall],
-                                           @"adLoadFailureInfo" : error.adLoadFailureInfo ?: @"",
-                                           @"latencyMillis" : [self requestLatencyMillisFromRequestLatency: error.requestLatency]}];
-    });
+    }
+    else if ( self.interstitials[adUnitIdentifier] )
+    {
+        name = @"OnInterstitialLoadFailedEvent";
+    }
+    else if ( self.appOpenAds[adUnitIdentifier] )
+    {
+        name = @"OnAppOpenAdLoadFailedEvent";
+    }
+    else if ( self.rewardedAds[adUnitIdentifier] )
+    {
+        name = @"OnRewardedAdLoadFailedEvent";
+    }
+    else if ( self.rewardedInterstitialAds[adUnitIdentifier] )
+    {
+        name = @"OnRewardedInterstitialAdLoadFailedEvent";
+    }
+    else
+    {
+        [self log: @"invalid adUnitId from %@", [NSThread callStackSymbols]];
+        return;
+    }
+    
+    @synchronized ( self.adInfoDictLock )
+    {
+        [self.adInfoDict removeObjectForKey: adUnitIdentifier];
+    }
+    
+    [MAUnityAdManager forwardUnityEventWithArgs: @{@"name" : name,
+                                                   @"adUnitId" : adUnitIdentifier,
+                                                   @"errorCode" : [@(error.code) stringValue],
+                                                   @"errorMessage" : error.message,
+                                                   @"waterfallInfo" : [self createAdWaterfallInfo: error.waterfall],
+                                                   @"adLoadFailureInfo" : error.adLoadFailureInfo ?: @""}];
 }
 
 - (void)didClickAd:(MAAd *)ad
 {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        
-        NSString *name;
-        MAAdFormat *adFormat = ad.format;
-        if ( MAAdFormat.banner == adFormat || MAAdFormat.leader == adFormat )
-        {
-            name = @"OnBannerAdClickedEvent";
-        }
-        else if ( MAAdFormat.mrec == adFormat )
-        {
-            name = @"OnMRecAdClickedEvent";
-        }
-        else if ( MAAdFormat.interstitial == adFormat )
-        {
-            name = @"OnInterstitialClickedEvent";
-        }
-        else if ( MAAdFormat.appOpen == adFormat )
-        {
-            name = @"OnAppOpenAdClickedEvent";
-        }
-        else if ( MAAdFormat.rewarded == adFormat )
-        {
-            name = @"OnRewardedAdClickedEvent";
-        }
-        else if ( MAAdFormat.rewardedInterstitial == adFormat )
-        {
-            name = @"OnRewardedInterstitialAdClickedEvent";
-        }
-        else
-        {
-            [self logInvalidAdFormat: adFormat];
-            return;
-        }
-        
-        NSDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
-        [self forwardUnityEventWithArgs: args];
-    });
+    NSString *name;
+    MAAdFormat *adFormat = ad.format;
+    if ( MAAdFormat.banner == adFormat || MAAdFormat.leader == adFormat )
+    {
+        name = @"OnBannerAdClickedEvent";
+    }
+    else if ( MAAdFormat.mrec == adFormat )
+    {
+        name = @"OnMRecAdClickedEvent";
+    }
+    else if ( MAAdFormat.crossPromo == adFormat )
+    {
+        name = @"OnCrossPromoAdClickedEvent";
+    }
+    else if ( MAAdFormat.interstitial == adFormat )
+    {
+        name = @"OnInterstitialClickedEvent";
+    }
+    else if ( MAAdFormat.appOpen == adFormat )
+    {
+        name = @"OnAppOpenAdClickedEvent";
+    }
+    else if ( MAAdFormat.rewarded == adFormat )
+    {
+        name = @"OnRewardedAdClickedEvent";
+    }
+    else if ( MAAdFormat.rewardedInterstitial == adFormat )
+    {
+        name = @"OnRewardedInterstitialAdClickedEvent";
+    }
+    else
+    {
+        [self logInvalidAdFormat: adFormat];
+        return;
+    }
+    
+    NSDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
+    [MAUnityAdManager forwardUnityEventWithArgs: args];
 }
 
 - (void)didDisplayAd:(MAAd *)ad
@@ -847,70 +865,62 @@ static ALUnityBackgroundCallback backgroundCallback;
     if ( ![adFormat isFullscreenAd] ) return;
     
 #if !IS_TEST_APP
-    // UnityPause needs to be called on the main thread.
-    UnityPause(YES);
+    UnityPause(1);
 #endif
     
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        
-        NSString *name;
-        if ( MAAdFormat.interstitial == adFormat )
-        {
-            name = @"OnInterstitialDisplayedEvent";
-        }
-        else if ( MAAdFormat.appOpen == adFormat )
-        {
-            name = @"OnAppOpenAdDisplayedEvent";
-        }
-        else if ( MAAdFormat.rewarded == adFormat )
-        {
-            name = @"OnRewardedAdDisplayedEvent";
-        }
-        else // rewarded inters
-        {
-            name = @"OnRewardedInterstitialAdDisplayedEvent";
-        }
-        
-        NSDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
-        [self forwardUnityEventWithArgs: args];
-    });
+    NSString *name;
+    if ( MAAdFormat.interstitial == adFormat )
+    {
+        name = @"OnInterstitialDisplayedEvent";
+    }
+    else if ( MAAdFormat.appOpen == adFormat )
+    {
+        name = @"OnAppOpenAdDisplayedEvent";
+    }
+    else if ( MAAdFormat.rewarded == adFormat )
+    {
+        name = @"OnRewardedAdDisplayedEvent";
+    }
+    else // rewarded inters
+    {
+        name = @"OnRewardedInterstitialAdDisplayedEvent";
+    }
+    
+    NSDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
+    [MAUnityAdManager forwardUnityEventWithArgs: args];
 }
 
 - (void)didFailToDisplayAd:(MAAd *)ad withError:(MAError *)error
 {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        
-        // BMLs do not support [DISPLAY] events in Unity
-        MAAdFormat *adFormat = ad.format;
-        if ( ![adFormat isFullscreenAd] ) return;
-        
-        NSString *name;
-        if ( MAAdFormat.interstitial == adFormat )
-        {
-            name = @"OnInterstitialAdFailedToDisplayEvent";
-        }
-        else if ( MAAdFormat.appOpen == adFormat )
-        {
-            name = @"OnAppOpenAdFailedToDisplayEvent";
-        }
-        else if ( MAAdFormat.rewarded == adFormat )
-        {
-            name = @"OnRewardedAdFailedToDisplayEvent";
-        }
-        else // rewarded inters
-        {
-            name = @"OnRewardedInterstitialAdFailedToDisplayEvent";
-        }
-        
-        NSMutableDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
-        args[@"errorCode"] = [@(error.code) stringValue];
-        args[@"errorMessage"] = error.message;
-        args[@"mediatedNetworkErrorCode"] = [@(error.mediatedNetworkErrorCode) stringValue];
-        args[@"mediatedNetworkErrorMessage"] = error.mediatedNetworkErrorMessage;
-        args[@"waterfallInfo"] = [self createAdWaterfallInfo: error.waterfall];
-        args[@"latencyMillis"] = [self requestLatencyMillisFromRequestLatency: error.requestLatency];
-        [self forwardUnityEventWithArgs: args];
-    });
+    // BMLs do not support [DISPLAY] events in Unity
+    MAAdFormat *adFormat = ad.format;
+    if ( ![adFormat isFullscreenAd] ) return;
+    
+    NSString *name;
+    if ( MAAdFormat.interstitial == adFormat )
+    {
+        name = @"OnInterstitialAdFailedToDisplayEvent";
+    }
+    else if ( MAAdFormat.appOpen == adFormat )
+    {
+        name = @"OnAppOpenAdFailedToDisplayEvent";
+    }
+    else if ( MAAdFormat.rewarded == adFormat )
+    {
+        name = @"OnRewardedAdFailedToDisplayEvent";
+    }
+    else // rewarded inters
+    {
+        name = @"OnRewardedInterstitialAdFailedToDisplayEvent";
+    }
+    
+    NSMutableDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
+    args[@"errorCode"] = [@(error.code) stringValue];
+    args[@"errorMessage"] = error.message;
+    args[@"mediatedNetworkErrorCode"] = [@(error.mediatedNetworkErrorCode) stringValue];
+    args[@"mediatedNetworkErrorMessage"] = error.mediatedNetworkErrorMessage;
+    args[@"waterfallInfo"] = [self createAdWaterfallInfo: error.waterfall];
+    [MAUnityAdManager forwardUnityEventWithArgs: args];
 }
 
 - (void)didHideAd:(MAAd *)ad
@@ -920,42 +930,29 @@ static ALUnityBackgroundCallback backgroundCallback;
     if ( ![adFormat isFullscreenAd] ) return;
     
 #if !IS_TEST_APP
-    extern bool _didResignActive;
-    if ( _didResignActive )
-    {
-        // If the application is not active, we should wait until application becomes active to resume unity.
-        self.resumeUnityAfterApplicationBecomesActive = YES;
-    }
-    else
-    {
-        // UnityPause needs to be called on the main thread.
-        UnityPause(NO);
-    }
+    UnityPause(0);
 #endif
     
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        
-        NSString *name;
-        if ( MAAdFormat.interstitial == adFormat )
-        {
-            name = @"OnInterstitialHiddenEvent";
-        }
-        else if ( MAAdFormat.appOpen == adFormat )
-        {
-            name = @"OnAppOpenAdHiddenEvent";
-        }
-        else if ( MAAdFormat.rewarded == adFormat )
-        {
-            name = @"OnRewardedAdHiddenEvent";
-        }
-        else // rewarded inters
-        {
-            name = @"OnRewardedInterstitialAdHiddenEvent";
-        }
-        
-        NSDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
-        [self forwardUnityEventWithArgs: args];
-    });
+    NSString *name;
+    if ( MAAdFormat.interstitial == adFormat )
+    {
+        name = @"OnInterstitialHiddenEvent";
+    }
+    else if ( MAAdFormat.appOpen == adFormat )
+    {
+        name = @"OnAppOpenAdHiddenEvent";
+    }
+    else if ( MAAdFormat.rewarded == adFormat )
+    {
+        name = @"OnRewardedAdHiddenEvent";
+    }
+    else // rewarded inters
+    {
+        name = @"OnRewardedInterstitialAdHiddenEvent";
+    }
+    
+    NSDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
+    [MAUnityAdManager forwardUnityEventWithArgs: args];
 }
 
 - (void)didExpandAd:(MAAd *)ad
@@ -968,25 +965,25 @@ static ALUnityBackgroundCallback backgroundCallback;
     }
     
 #if !IS_TEST_APP
-    // UnityPause needs to be called on the main thread.
-    UnityPause(YES);
+    UnityPause(1);
 #endif
     
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        
-        NSString *name;
-        if ( MAAdFormat.mrec == adFormat )
-        {
-            name = @"OnMRecAdExpandedEvent";
-        }
-        else
-        {
-            name = @"OnBannerAdExpandedEvent";
-        }
-        
-        NSDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
-        [self forwardUnityEventWithArgs: args];
-    });
+    NSString *name;
+    if ( MAAdFormat.mrec == adFormat )
+    {
+        name = @"OnMRecAdExpandedEvent";
+    }
+    else if ( MAAdFormat.crossPromo == adFormat )
+    {
+        name = @"OnCrossPromoAdExpandedEvent";
+    }
+    else
+    {
+        name = @"OnBannerAdExpandedEvent";
+    }
+    
+    NSDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
+    [MAUnityAdManager forwardUnityEventWithArgs: args];
 }
 
 - (void)didCollapseAd:(MAAd *)ad
@@ -999,34 +996,25 @@ static ALUnityBackgroundCallback backgroundCallback;
     }
     
 #if !IS_TEST_APP
-    extern bool _didResignActive;
-    if ( _didResignActive )
+    UnityPause(0);
+#endif
+    
+    NSString *name;
+    if ( MAAdFormat.mrec == adFormat )
     {
-        // If the application is not active, we should wait until application becomes active to resume unity.
-        self.resumeUnityAfterApplicationBecomesActive = YES;
+        name = @"OnMRecAdCollapsedEvent";
+    }
+    else if ( MAAdFormat.crossPromo == adFormat )
+    {
+        name = @"OnCrossPromoAdCollapsedEvent";
     }
     else
     {
-        // UnityPause needs to be called on the main thread.
-        UnityPause(NO);
+        name = @"OnBannerAdCollapsedEvent";
     }
-#endif
     
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        
-        NSString *name;
-        if ( MAAdFormat.mrec == adFormat )
-        {
-            name = @"OnMRecAdCollapsedEvent";
-        }
-        else
-        {
-            name = @"OnBannerAdCollapsedEvent";
-        }
-        
-        NSDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
-        [self forwardUnityEventWithArgs: args];
-    });
+    NSDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
+    [MAUnityAdManager forwardUnityEventWithArgs: args];
 }
 
 - (void)didStartRewardedVideoForAd:(MAAd *)ad
@@ -1041,110 +1029,103 @@ static ALUnityBackgroundCallback backgroundCallback;
 
 - (void)didRewardUserForAd:(MAAd *)ad withReward:(MAReward *)reward
 {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        
-        MAAdFormat *adFormat = ad.format;
-        if ( adFormat != MAAdFormat.rewarded && adFormat != MAAdFormat.rewardedInterstitial )
-        {
-            [self logInvalidAdFormat: adFormat];
-            return;
-        }
-        
-        NSString *rewardLabel = reward ? reward.label : @"";
-        NSInteger rewardAmountInt = reward ? reward.amount : 0;
-        NSString *rewardAmount = [@(rewardAmountInt) stringValue];
-        
-        NSString *name = (adFormat == MAAdFormat.rewarded) ? @"OnRewardedAdReceivedRewardEvent" : @"OnRewardedInterstitialAdReceivedRewardEvent";
-        
-        
-        NSMutableDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
-        args[@"rewardLabel"] = rewardLabel;
-        args[@"rewardAmount"] = rewardAmount;
-        [self forwardUnityEventWithArgs: args];
-    });
+    MAAdFormat *adFormat = ad.format;
+    if ( adFormat != MAAdFormat.rewarded && adFormat != MAAdFormat.rewardedInterstitial )
+    {
+        [self logInvalidAdFormat: adFormat];
+        return;
+    }
+    
+    NSString *rewardLabel = reward ? reward.label : @"";
+    NSInteger rewardAmountInt = reward ? reward.amount : 0;
+    NSString *rewardAmount = [@(rewardAmountInt) stringValue];
+    
+    NSString *name = (adFormat == MAAdFormat.rewarded) ? @"OnRewardedAdReceivedRewardEvent" : @"OnRewardedInterstitialAdReceivedRewardEvent";
+    
+    
+    NSMutableDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
+    args[@"rewardLabel"] = rewardLabel;
+    args[@"rewardAmount"] = rewardAmount;
+    [MAUnityAdManager forwardUnityEventWithArgs: args];
 }
 
 - (void)didPayRevenueForAd:(MAAd *)ad
 {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        
-        NSString *name;
-        MAAdFormat *adFormat = ad.format;
-        if ( MAAdFormat.banner == adFormat || MAAdFormat.leader == adFormat )
-        {
-            name = @"OnBannerAdRevenuePaidEvent";
-        }
-        else if ( MAAdFormat.mrec == adFormat )
-        {
-            name = @"OnMRecAdRevenuePaidEvent";
-        }
-        else if ( MAAdFormat.interstitial == adFormat )
-        {
-            name = @"OnInterstitialAdRevenuePaidEvent";
-        }
-        else if ( MAAdFormat.appOpen == adFormat )
-        {
-            name = @"OnAppOpenAdRevenuePaidEvent";
-        }
-        else if ( MAAdFormat.rewarded == adFormat )
-        {
-            name = @"OnRewardedAdRevenuePaidEvent";
-        }
-        else if ( MAAdFormat.rewardedInterstitial == adFormat )
-        {
-            name = @"OnRewardedInterstitialAdRevenuePaidEvent";
-        }
-        else
-        {
-            [self logInvalidAdFormat: adFormat];
-            return;
-        }
-        
-        NSMutableDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
-        args[@"keepInBackground"] = @([adFormat isFullscreenAd]);
-        [self forwardUnityEventWithArgs: args];
-    });
+    NSString *name;
+    MAAdFormat *adFormat = ad.format;
+    if ( MAAdFormat.banner == adFormat || MAAdFormat.leader == adFormat )
+    {
+        name = @"OnBannerAdRevenuePaidEvent";
+    }
+    else if ( MAAdFormat.mrec == adFormat )
+    {
+        name = @"OnMRecAdRevenuePaidEvent";
+    }
+    else if ( MAAdFormat.crossPromo == adFormat )
+    {
+        name = @"OnCrossPromoAdRevenuePaidEvent";
+    }
+    else if ( MAAdFormat.interstitial == adFormat )
+    {
+        name = @"OnInterstitialAdRevenuePaidEvent";
+    }
+    else if ( MAAdFormat.appOpen == adFormat )
+    {
+        name = @"OnAppOpenAdRevenuePaidEvent";
+    }
+    else if ( MAAdFormat.rewarded == adFormat )
+    {
+        name = @"OnRewardedAdRevenuePaidEvent";
+    }
+    else if ( MAAdFormat.rewardedInterstitial == adFormat )
+    {
+        name = @"OnRewardedInterstitialAdRevenuePaidEvent";
+    }
+    else
+    {
+        [self logInvalidAdFormat: adFormat];
+        return;
+    }
+    
+    NSDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
+    [MAUnityAdManager forwardUnityEventWithArgs: args forwardInBackground: [adFormat isFullscreenAd]];
 }
 
 - (void)didGenerateCreativeIdentifier:(NSString *)creativeIdentifier forAd:(MAAd *)ad
 {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        
-        NSString *name;
-        MAAdFormat *adFormat = ad.format;
-        if ( MAAdFormat.banner == adFormat || MAAdFormat.leader == adFormat )
-        {
-            name = @"OnBannerAdReviewCreativeIdGeneratedEvent";
-        }
-        else if ( MAAdFormat.mrec == adFormat )
-        {
-            name = @"OnMRecAdReviewCreativeIdGeneratedEvent";
-        }
-        else if ( MAAdFormat.interstitial == adFormat )
-        {
-            name = @"OnInterstitialAdReviewCreativeIdGeneratedEvent";
-        }
-        else if ( MAAdFormat.rewarded == adFormat )
-        {
-            name = @"OnRewardedAdReviewCreativeIdGeneratedEvent";
-        }
-        else if ( MAAdFormat.rewardedInterstitial == adFormat )
-        {
-            name = @"OnRewardedInterstitialAdReviewCreativeIdGeneratedEvent";
-        }
-        else
-        {
-            [self logInvalidAdFormat: adFormat];
-            return;
-        }
-        
-        NSMutableDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
-        args[@"adReviewCreativeId"] = creativeIdentifier;
-        args[@"keepInBackground"] = @([adFormat isFullscreenAd]);
-        
-        // Forward the event in background for fullscreen ads so that the user gets the callback even while the ad is playing.
-        [self forwardUnityEventWithArgs: args];
-    });
+    NSString *name;
+    MAAdFormat *adFormat = ad.format;
+    if ( MAAdFormat.banner == adFormat || MAAdFormat.leader == adFormat )
+    {
+        name = @"OnBannerAdReviewCreativeIdGeneratedEvent";
+    }
+    else if ( MAAdFormat.mrec == adFormat )
+    {
+        name = @"OnMRecAdReviewCreativeIdGeneratedEvent";
+    }
+    else if ( MAAdFormat.interstitial == adFormat )
+    {
+        name = @"OnInterstitialAdReviewCreativeIdGeneratedEvent";
+    }
+    else if ( MAAdFormat.rewarded == adFormat )
+    {
+        name = @"OnRewardedAdReviewCreativeIdGeneratedEvent";
+    }
+    else if ( MAAdFormat.rewardedInterstitial == adFormat )
+    {
+        name = @"OnRewardedInterstitialAdReviewCreativeIdGeneratedEvent";
+    }
+    else
+    {
+        [self logInvalidAdFormat: adFormat];
+        return;
+    }
+    
+    NSMutableDictionary<NSString *, id> *args = [self defaultAdEventParametersForName: name withAd: ad];
+    args[@"adReviewCreativeId"] = creativeIdentifier;
+    
+    // Forward the event in background for fullscreen ads so that the user gets the callback even while the ad is playing.
+    [MAUnityAdManager forwardUnityEventWithArgs: args forwardInBackground: [adFormat isFullscreenAd]];
 }
 
 - (NSMutableDictionary<NSString *, id> *)defaultAdEventParametersForName:(NSString *)name withAd:(MAAd *)ad
@@ -1556,6 +1537,8 @@ static ALUnityBackgroundCallback backgroundCallback;
         [self.adViewPositions removeObjectForKey: adUnitIdentifier];
         [self.adViewOffsets removeObjectForKey: adUnitIdentifier];
         [self.adViewWidths removeObjectForKey: adUnitIdentifier];
+        [self.crossPromoAdViewHeights removeObjectForKey: adUnitIdentifier];
+        [self.crossPromoAdViewRotations removeObjectForKey: adUnitIdentifier];
         [self.verticalAdViewFormats removeObjectForKey: adUnitIdentifier];
         [self.disabledAdaptiveBannerAdUnitIdentifiers removeObject: adUnitIdentifier];
     });
@@ -1695,6 +1678,8 @@ static ALUnityBackgroundCallback backgroundCallback;
         CGPoint adViewOffset = [adViewPositionValue CGPointValue];
         BOOL isAdaptiveBannerDisabled = [self.disabledAdaptiveBannerAdUnitIdentifiers containsObject: adUnitIdentifier];
         BOOL isWidthPtsOverridden = self.adViewWidths[adUnitIdentifier] != nil;
+        BOOL isCrossPromoHeightPtsOverridden = self.crossPromoAdViewHeights[adUnitIdentifier] != nil;
+        BOOL isCrossPromoRotationOverridden = self.crossPromoAdViewRotations[adUnitIdentifier] != nil;
         
         UIView *superview = adView.superview;
         if ( !superview ) return;
@@ -1742,7 +1727,11 @@ static ALUnityBackgroundCallback backgroundCallback;
         //
         CGFloat adViewHeight;
         
-        if ( (adFormat == MAAdFormat.banner || adFormat == MAAdFormat.leader) && !isAdaptiveBannerDisabled )
+        if ( isCrossPromoHeightPtsOverridden )
+        {
+            adViewHeight = self.crossPromoAdViewHeights[adUnitIdentifier].floatValue;
+        }
+        else if ( (adFormat == MAAdFormat.banner || adFormat == MAAdFormat.leader) && !isAdaptiveBannerDisabled )
         {
             adViewHeight = [adFormat adaptiveSizeForWidth: adViewWidth].height;
         }
@@ -1970,6 +1959,11 @@ static ALUnityBackgroundCallback backgroundCallback;
             }
         }
         
+        if ( isCrossPromoRotationOverridden )
+        {
+            adView.transform = CGAffineTransformRotate(CGAffineTransformIdentity, DEGREES_TO_RADIANS(self.crossPromoAdViewRotations[adUnitIdentifier].floatValue));
+        }
+        
         self.adViewConstraints[adUnitIdentifier] = constraints;
         
         [NSLayoutConstraint activateConstraints: constraints];
@@ -1982,19 +1976,24 @@ static ALUnityBackgroundCallback backgroundCallback;
     return UnityGetGLViewController() ?: UnityGetMainWindow().rootViewController ?: [KEY_WINDOW rootViewController];
 }
 
-- (void)forwardUnityEventWithArgs:(NSDictionary<NSString *, id> *)args
++ (void)forwardUnityEventWithArgs:(NSDictionary<NSString *, id> *)args
+{
+    [MAUnityAdManager forwardUnityEventWithArgs: args forwardInBackground: NO];
+}
+
++ (void)forwardUnityEventWithArgs:(NSDictionary<NSString *, id> *)args forwardInBackground:(BOOL)forwardInBackground
 {
 #if !IS_TEST_APP
-    extern bool _didResignActive;
-    // We should not call any script callbacks when application is not active. Suspend the callback queue if resign is active.
-    // We'll resume the queue once the application becomes active again.
-    self.backgroundCallbackEventsQueue.suspended = _didResignActive;
+    char *serializedParameters = [self serializeParameters: args].UTF8String;
+    if ( forwardInBackground )
+    {
+        backgroundCallback(serializedParameters);
+    }
+    else
+    {
+        UnitySendMessage("MaxSdkCallbacks", "ForwardEvent", serializedParameters);
+    }
 #endif
-    
-    [self.backgroundCallbackEventsQueue addOperationWithBlock:^{
-        NSString *serializedParameters = [MAUnityAdManager serializeParameters: args];
-        backgroundCallback(serializedParameters.UTF8String);
-    }];
 }
 
 + (NSString *)serializeParameters:(NSDictionary<NSString *, id> *)dict
@@ -2037,20 +2036,11 @@ static ALUnityBackgroundCallback backgroundCallback;
     }
 }
 
-- (NSString *)requestLatencyMillisFromRequestLatency:(NSTimeInterval)requestLatency
-{
-    // Convert latency from seconds to milliseconds to match Android.
-    long requestLatencyMillis = requestLatency * 1000;
-    return @(requestLatencyMillis).stringValue;
-}
-
 #pragma mark - User Service
 
 - (void)didDismissUserConsentDialog
 {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        [self forwardUnityEventWithArgs: @{@"name" : @"OnSdkConsentDialogDismissedEvent"}];
-    });
+    [MAUnityAdManager forwardUnityEventWithArgs: @{@"name" : @"OnSdkConsentDialogDismissedEvent"}];
 }
 
 #pragma mark - CMP Service
@@ -2059,42 +2049,19 @@ static ALUnityBackgroundCallback backgroundCallback;
 {
     [self.sdk.cmpService showCMPForExistingUserWithCompletion:^(ALCMPError * _Nullable error) {
         
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-            NSMutableDictionary<NSString *, id> *args = [NSMutableDictionary dictionaryWithCapacity: 2];
-            args[@"name"] = @"OnCmpCompletedEvent";
-            
-            if ( error )
-            {
-                args[@"error"] = @{@"code": @(error.code),
-                                   @"message": error.message,
-                                   @"cmpCode": @(error.cmpCode),
-                                   @"cmpMessage": error.cmpMessage,
-                                   @"keepInBackground": @(YES)};
-            }
-            
-            [self forwardUnityEventWithArgs: args];
-        });
+        NSMutableDictionary<NSString *, id> *args = [NSMutableDictionary dictionaryWithCapacity: 2];
+        args[@"name"] = @"OnCmpCompletedEvent";
+        
+        if ( error )
+        {
+            args[@"error"] = @{@"code": @(error.code),
+                               @"message": error.message,
+                               @"cmpCode": @(error.cmpCode),
+                               @"cmpMessage": error.cmpMessage};
+        }
+        
+        [MAUnityAdManager forwardUnityEventWithArgs: args forwardInBackground: YES];
     }];
-}
-
-#pragma mark - Application
-
-- (void)applicationPaused:(NSNotification *)notification
-{
-    [self notifyApplicationStateChangedEventForPauseState: YES];
-}
-
-- (void)applicationResumed:(NSNotification *)notification
-{
-    [self notifyApplicationStateChangedEventForPauseState: NO];
-}
-
-- (void)notifyApplicationStateChangedEventForPauseState:(BOOL)isPaused
-{
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        [self forwardUnityEventWithArgs: @{@"name": @"OnApplicationStateChanged",
-                                           @"isPaused": @(isPaused)}];
-    });
 }
 
 - (MAAd *)adWithAdUnitIdentifier:(NSString *)adUnitIdentifier

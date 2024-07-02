@@ -12,16 +12,13 @@ using System.IO;
 using System.Linq;
 using UnityEditor;
 
-namespace AppLovinMax.Scripts.IntegrationManager.Editor
+namespace AppLovinMax.Scripts.Editor
 {
     [InitializeOnLoad]
-    public class AppLovinInitialize
+    public class MaxInitialize
     {
         private static readonly List<string> ObsoleteNetworks = new List<string>
         {
-            "AdColony",
-            "Criteo",
-            "Nend",
             "Snap",
             "Tapjoy",
             "VerizonAds",
@@ -30,10 +27,6 @@ namespace AppLovinMax.Scripts.IntegrationManager.Editor
 
         private static readonly List<string> ObsoleteFileExportPathsToDelete = new List<string>
         {
-            // The `MaxSdk/Scripts/Editor` folder contents have been moved into `MaxSdk/Scripts/IntegrationManager/Editor`.
-            "MaxSdk/Scripts/Editor",
-            "MaxSdk/Scripts/Editor.meta",
-
             // The `EventSystemChecker` has been renamed to `MaxEventSystemChecker`.
             "MaxSdk/Scripts/EventSystemChecker.cs",
             "MaxSdk/Scripts/EventSystemChecker.cs.meta",
@@ -61,7 +54,7 @@ namespace AppLovinMax.Scripts.IntegrationManager.Editor
             "MaxSdk/Mediation/GoogleAdManager/Editor/MaxSdk.Mediation.GoogleAdManager.Editor.asmdef.meta",
             "Plugins/Android/MaxMediationGoogleAdManager.androidlib",
             "Plugins/Android/MaxMediationGoogleAdManager.androidlib.meta",
-
+                
             // The `VariableService` has been removed.
             "MaxSdk/Scripts/MaxVariableServiceAndroid.cs",
             "MaxSdk/Scripts/MaxVariableServiceAndroid.cs.meta",
@@ -71,7 +64,7 @@ namespace AppLovinMax.Scripts.IntegrationManager.Editor
             "MaxSdk/Scripts/MaxVariableServiceUnityEditor.cs.meta"
         };
 
-        static AppLovinInitialize()
+        static MaxInitialize()
         {
 #if UNITY_IOS
             // Check that the publisher is targeting iOS 9.0+

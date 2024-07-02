@@ -20,22 +20,18 @@ namespace AppLovinMax.Scripts.IntegrationManager.Editor
             AddGoogleCmpDependencyIfNeeded();
         }
 
-        private const string UmpLegacyDependencyLine = "<iosPod name=\"GoogleUserMessagingPlatform\" version=\"2.1.0\" />";
-        private const string UmpDependencyLine = "<iosPod name=\"GoogleUserMessagingPlatform\" version=\"~&gt; 2.1\" />";
-        private const string IosPodsContainerElementString = "iosPods";
-
         private static void AddGoogleCmpDependencyIfNeeded()
         {
-            // Remove the legacy fixed UMP version if it exists, we'll add the dependency with a dynamic version below.
-            TryRemoveStringFromDependencyFile(UmpLegacyDependencyLine, IosPodsContainerElementString);
+            const string umpDependencyLine = "<iosPod name=\"GoogleUserMessagingPlatform\" version=\"2.1.0\" />";
+            const string containerElementString = "iosPods";
 
             if (AppLovinInternalSettings.Instance.ConsentFlowEnabled)
             {
-                TryAddStringToDependencyFile(UmpDependencyLine, IosPodsContainerElementString);
+                TryAddStringToDependencyFile(umpDependencyLine, containerElementString);
             }
             else
             {
-                TryRemoveStringFromDependencyFile(UmpDependencyLine, IosPodsContainerElementString);
+                TryRemoveStringFromDependencyFile(umpDependencyLine, containerElementString);
             }
         }
 

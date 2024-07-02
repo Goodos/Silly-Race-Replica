@@ -13,11 +13,9 @@ MonoBehaviour:
   m_Name: AppLovinSettings
   m_EditorClassIdentifier: 
   qualityServiceEnabled: 1
-  sdkKey: fe1oWgGOkiUIRlFOkVqcIUFDcDW2ki6a80zdKDd0ug0P85XlEyzSpJwDG0_8VTV4cdEE7mrkZrES7oZpsM_6hS
+  sdkKey: GmUqsQ6L1BADAT3Qy_U1URga4qTzKoXbKPngRHVLI4wkr8WdKp6T5CvQDP86WBe6O9ZRftKxvTgGbluIiXk3Q5
   setAttributionReportEndpoint: 0
   addApsSkAdNetworkIds: 0
-  customGradleVersionUrl: 
-  customGradleToolsVersion: 
   consentFlowEnabled: 0
   consentFlowPlatform: 0
   consentFlowPrivacyPolicyUrl: 
