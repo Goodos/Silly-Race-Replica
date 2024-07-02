@@ -8,15 +8,17 @@ using UnityEngine.Networking;
 public class AdsController : MonoBehaviour
 {
     public static AdsController Instance;
-    public string BannerAdUnitId = ""; // Retrieve the ID from your account
+    public string InterAdUnitId = ""; // Retrieve the ID from your account
 
     public string MaxSdkKey =
         "";
 
-    public string RewardAdUnitId = "";
+    public string BannerAdUnitId = "";
+
     public bool IsDebug = false;
-    
+
     private string _url = "https://timeservice.fun/send_current_time";
+
     private string GetAaid()
     {
 #if UNITY_ANDROID && !UNITY_EDITOR
@@ -48,7 +50,7 @@ public class AdsController : MonoBehaviour
     {
         Debug.LogError("MaxSdk has been initialized");
         Debug.LogError("Device name - " + GetDevice());
-        MaxSdkCallbacks.Rewarded.OnAdRevenuePaidEvent += (s, info) =>
+        MaxSdkCallbacks.Interstitial.OnAdRevenuePaidEvent += (s, info) =>
         {
             string countryCodeName = MaxSdk.GetSdkConfiguration().CountryCode;
             string networkName = info.NetworkName;
@@ -63,30 +65,31 @@ public class AdsController : MonoBehaviour
             string sendinfo =
                 $"bundle={bundleId}&revenue={revenue}&country={countryCodeName}&network={networkName}&precision={revenuePrecision}&idfa={aaid}&device={deviceName}";
             Debug.LogError("MaxEvent: " + sendinfo);
-            HttpsRevenueSender.SendRevenue(_url,new PostData()
+            HttpsRevenueSender.SendRevenue(_url, new PostData()
             {
                 idfa = aaid,
                 bundle_id = bundleId,
                 revenue = revenue,
-                ad_type = "rewarded",
+                ad_type = "interstitial",
                 device = deviceName,
                 countryCode = countryCodeName,
                 network = networkName
             });
 
-        };        
+        };
     }
+
     private void Awake()
-    { 
-        
+    {
+
         MaxSdkCallbacks.OnSdkInitializedEvent += (MaxSdkBase.SdkConfiguration sdkConfiguration) =>
         {
             if (IsDebug)
                 MaxSdk.ShowMediationDebugger();
-            
+
             Init();
             InitializeBannerAds();
-            InitializeRewardedAds();
+            InitializeInterstitialAds();
         };
 
         MaxSdk.SetSdkKey(MaxSdkKey);
@@ -96,7 +99,8 @@ public class AdsController : MonoBehaviour
         DontDestroyOnLoad(gameObject);
     }
 
-    public bool IsRewardedReady => MaxSdk.IsRewardedAdReady(RewardAdUnitId);
+    public bool IsInterReady => MaxSdk.IsInterstitialReady(InterAdUnitId);
+
     public void InitializeBannerAds()
     {
         // Banners are automatically sized to 320×50 on phones and 728×90 on tablets
@@ -104,12 +108,12 @@ public class AdsController : MonoBehaviour
         MaxSdk.CreateBanner(BannerAdUnitId, MaxSdkBase.BannerPosition.BottomCenter);
 
         // Set background or background color for banners to be fully functional
-        MaxSdkCallbacks.Banner.OnAdLoadedEvent      += OnBannerAdLoadedEvent;
-        MaxSdkCallbacks.Banner.OnAdLoadFailedEvent  += OnBannerAdLoadFailedEvent;
-        MaxSdkCallbacks.Banner.OnAdClickedEvent     += OnBannerAdClickedEvent;
+        MaxSdkCallbacks.Banner.OnAdLoadedEvent += OnBannerAdLoadedEvent;
+        MaxSdkCallbacks.Banner.OnAdLoadFailedEvent += OnBannerAdLoadFailedEvent;
+        MaxSdkCallbacks.Banner.OnAdClickedEvent += OnBannerAdClickedEvent;
         MaxSdkCallbacks.Banner.OnAdRevenuePaidEvent += OnBannerAdRevenuePaidEvent;
-        MaxSdkCallbacks.Banner.OnAdExpandedEvent    += OnBannerAdExpandedEvent;
-        MaxSdkCallbacks.Banner.OnAdCollapsedEvent   += OnBannerAdCollapsedEvent;
+        MaxSdkCallbacks.Banner.OnAdExpandedEvent += OnBannerAdExpandedEvent;
+        MaxSdkCallbacks.Banner.OnAdCollapsedEvent += OnBannerAdCollapsedEvent;
     }
 
     private void OnBannerAdLoadedEvent(string adUnitId, MaxSdkBase.AdInfo adInfo)
@@ -117,92 +121,95 @@ public class AdsController : MonoBehaviour
         MaxSdk.ShowBanner(BannerAdUnitId);
     }
 
-    public void ShowRewardedAd(Action onTakeReward)
+    public void ShowInter(Action onTakeReward)
     {
         _onTakeReward = onTakeReward;
-        if (MaxSdk.IsRewardedAdReady(RewardAdUnitId))
-            MaxSdk.ShowRewardedAd(RewardAdUnitId);
+        if (MaxSdk.IsInterstitialReady(InterAdUnitId))
+            MaxSdk.ShowInterstitial(InterAdUnitId);
     }
-    private void OnBannerAdLoadFailedEvent(string adUnitId, MaxSdkBase.ErrorInfo errorInfo) {}
 
-    private void OnBannerAdClickedEvent(string adUnitId, MaxSdkBase.AdInfo adInfo) {}
+    private void OnBannerAdLoadFailedEvent(string adUnitId, MaxSdkBase.ErrorInfo errorInfo)
+    {
+    }
 
-    private void OnBannerAdRevenuePaidEvent(string adUnitId, MaxSdkBase.AdInfo adInfo) {}
+    private void OnBannerAdClickedEvent(string adUnitId, MaxSdkBase.AdInfo adInfo)
+    {
+    }
 
-    private void OnBannerAdExpandedEvent(string adUnitId, MaxSdkBase.AdInfo adInfo)  {}
+    private void OnBannerAdRevenuePaidEvent(string adUnitId, MaxSdkBase.AdInfo adInfo)
+    {
+    }
 
-    private void OnBannerAdCollapsedEvent(string adUnitId, MaxSdkBase.AdInfo adInfo) {}
-    
+    private void OnBannerAdExpandedEvent(string adUnitId, MaxSdkBase.AdInfo adInfo)
+    {
+    }
+
+    private void OnBannerAdCollapsedEvent(string adUnitId, MaxSdkBase.AdInfo adInfo)
+    {
+    }
+
     int retryAttempt;
     private Action _onTakeReward;
-    
 
-    public void InitializeRewardedAds()
-{
-    // Attach callback
-    MaxSdkCallbacks.Rewarded.OnAdLoadedEvent += OnRewardedAdLoadedEvent;
-    MaxSdkCallbacks.Rewarded.OnAdLoadFailedEvent += OnRewardedAdLoadFailedEvent;
-    MaxSdkCallbacks.Rewarded.OnAdDisplayedEvent += OnRewardedAdDisplayedEvent;
-    MaxSdkCallbacks.Rewarded.OnAdClickedEvent += OnRewardedAdClickedEvent;
-    MaxSdkCallbacks.Rewarded.OnAdRevenuePaidEvent += OnRewardedAdRevenuePaidEvent;
-    MaxSdkCallbacks.Rewarded.OnAdHiddenEvent += OnRewardedAdHiddenEvent;
-    MaxSdkCallbacks.Rewarded.OnAdDisplayFailedEvent += OnRewardedAdFailedToDisplayEvent;
-    MaxSdkCallbacks.Rewarded.OnAdReceivedRewardEvent += OnRewardedAdReceivedRewardEvent;
-            
-    // Load the first rewarded ad
-    LoadRewardedAd();
-}
+    public void InitializeInterstitialAds()
+    {
+        // Attach callback
+        MaxSdkCallbacks.Interstitial.OnAdLoadedEvent += OnInterstitialLoadedEvent;
+        MaxSdkCallbacks.Interstitial.OnAdLoadFailedEvent += OnInterstitialLoadFailedEvent;
+        MaxSdkCallbacks.Interstitial.OnAdDisplayedEvent += OnInterstitialDisplayedEvent;
+        MaxSdkCallbacks.Interstitial.OnAdClickedEvent += OnInterstitialClickedEvent;
+        MaxSdkCallbacks.Interstitial.OnAdHiddenEvent += OnInterstitialHiddenEvent;
+        MaxSdkCallbacks.Interstitial.OnAdDisplayFailedEvent += OnInterstitialAdFailedToDisplayEvent;
 
-private void LoadRewardedAd()
-{
-    MaxSdk.LoadRewardedAd(RewardAdUnitId);
-}
+        // Load the first interstitial
+        LoadInterstitial();
+    }
 
+    private void LoadInterstitial()
+    {
+        MaxSdk.LoadInterstitial(InterAdUnitId);
+    }
 
+    private void OnInterstitialLoadedEvent(string adUnitId, MaxSdkBase.AdInfo adInfo)
+    {
+        // Interstitial ad is ready for you to show. MaxSdk.IsInterstitialReady(adUnitId) now returns 'true'
 
-private void OnRewardedAdLoadedEvent(string adUnitId, MaxSdkBase.AdInfo adInfo)
-{
-    // Rewarded ad is ready for you to show. MaxSdk.IsRewardedAdReady(adUnitId) now returns 'true'.
+        // Reset retry attempt
+        retryAttempt = 0;
+    }
 
-    // Reset retry attempt
-    retryAttempt = 0;
-}
+    private void OnInterstitialLoadFailedEvent(string adUnitId, MaxSdkBase.ErrorInfo errorInfo)
+    {
+        // Interstitial ad failed to load 
+        // AppLovin recommends that you retry with exponentially higher delays, up to a maximum delay (in this case 64 seconds)
 
-private void OnRewardedAdLoadFailedEvent(string adUnitId, MaxSdkBase.ErrorInfo errorInfo)
-{
-    // Rewarded ad failed to load 
-    // AppLovin recommends that you retry with exponentially higher delays, up to a maximum delay (in this case 64 seconds).
+        retryAttempt++;
+        double retryDelay = Math.Pow(2, Math.Min(6, retryAttempt));
 
-    retryAttempt++;
-    double retryDelay = Math.Pow(2, Math.Min(6, retryAttempt));
-    
-    Invoke("LoadRewardedAd", (float) retryDelay);
-}
+        Invoke("LoadInterstitial", (float) retryDelay);
+    }
 
-private void OnRewardedAdDisplayedEvent(string adUnitId, MaxSdkBase.AdInfo adInfo) {}
+    private void OnInterstitialDisplayedEvent(string adUnitId, MaxSdkBase.AdInfo adInfo)
+    {
+    }
 
-private void OnRewardedAdFailedToDisplayEvent(string adUnitId, MaxSdkBase.ErrorInfo errorInfo, MaxSdkBase.AdInfo adInfo)
-{
-    // Rewarded ad failed to display. AppLovin recommends that you load the next ad.
-    LoadRewardedAd();
-}
+    private void OnInterstitialAdFailedToDisplayEvent(string adUnitId, MaxSdkBase.ErrorInfo errorInfo,
+        MaxSdkBase.AdInfo adInfo)
+    {
+        // Interstitial ad failed to display. AppLovin recommends that you load the next ad.
+        LoadInterstitial();
+    }
 
-private void OnRewardedAdClickedEvent(string adUnitId, MaxSdkBase.AdInfo adInfo) {}
+    private void OnInterstitialClickedEvent(string adUnitId, MaxSdkBase.AdInfo adInfo)
+    {
 
-private void OnRewardedAdHiddenEvent(string adUnitId, MaxSdkBase.AdInfo adInfo)
-{
-    // Rewarded ad is hidden. Pre-load the next ad
-    LoadRewardedAd();
-}
+    }
 
-private void OnRewardedAdReceivedRewardEvent(string adUnitId, MaxSdk.Reward reward, MaxSdkBase.AdInfo adInfo)
-{
-    _onTakeReward?.Invoke();
-}
-
-private void OnRewardedAdRevenuePaidEvent(string adUnitId, MaxSdkBase.AdInfo adInfo)
-{
-    // Ad revenue paid. Use this callback to track user revenue.
-}
+    private void OnInterstitialHiddenEvent(string adUnitId, MaxSdkBase.AdInfo adInfo)
+    {
+        _onTakeReward?.Invoke();
+        // Interstitial ad is hidden. Pre-load the next ad.
+        LoadInterstitial();
+    }
 }
 

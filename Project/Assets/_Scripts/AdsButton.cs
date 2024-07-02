@@ -10,27 +10,27 @@ public class AdsButton : MonoBehaviour
     void Start()
     {
         _skipLvl.onClick.AddListener(ShowAds);
-        _skipLvl.gameObject.SetActive(AdsController.Instance.IsRewardedReady);
-        MaxSdkCallbacks.Rewarded.OnAdLoadedEvent += UpdateBtn;
+        _skipLvl.gameObject.SetActive(AdsController.Instance.IsInterReady);
+        MaxSdkCallbacks.Interstitial.OnAdLoadedEvent += UpdateBtn;
     }
 
-    private void UpdateBtn(string arg1, MaxSdkBase.AdInfo arg2)
+    private void UpdateBtn(string s, MaxSdkBase.AdInfo adInfo)
     {
-        _skipLvl.gameObject.SetActive(AdsController.Instance.IsRewardedReady);
+        _skipLvl.gameObject.SetActive(AdsController.Instance.IsInterReady);
     }
 
     private void ShowAds()
     {
-        AdsController.Instance.ShowRewardedAd(() =>
+        AdsController.Instance.ShowInter(() =>
         {
-            //GameController.Instance.CollectSoftCurrency((GameModel.Instance.SoftCurrency+1)*2);
+            
         });
     }
 
     private void OnDestroy()
     {
         _skipLvl.onClick.RemoveListener(ShowAds);  
-        MaxSdkCallbacks.Rewarded.OnAdLoadedEvent -= UpdateBtn;
+        MaxSdkCallbacks.Interstitial.OnAdLoadedEvent -= UpdateBtn;
     }
 
     // Update is called once per frame
