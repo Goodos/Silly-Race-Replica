@@ -81,22 +81,25 @@ public class AdsController : MonoBehaviour
 
     private void Awake()
     {
+        if (GameObject.Find("MaxSdkCallbacks") == null)
+            {   
+                //Debug.LogError("ads not exist");
+                MaxSdkCallbacks.OnSdkInitializedEvent += (MaxSdkBase.SdkConfiguration sdkConfiguration) =>
+                {
+                    if (IsDebug)
+                        MaxSdk.ShowMediationDebugger();
 
-        MaxSdkCallbacks.OnSdkInitializedEvent += (MaxSdkBase.SdkConfiguration sdkConfiguration) =>
-        {
-            if (IsDebug)
-                MaxSdk.ShowMediationDebugger();
+                    Init();
+                    InitializeBannerAds();
+                    InitializeInterstitialAds();
+                };
 
-            Init();
-            InitializeBannerAds();
-            InitializeInterstitialAds();
-        };
-
-        MaxSdk.SetSdkKey(MaxSdkKey);
-        MaxSdk.SetUserId("USER_ID");
-        MaxSdk.InitializeSdk();
-        Instance = this;
-        DontDestroyOnLoad(gameObject);
+                MaxSdk.SetSdkKey(MaxSdkKey);
+                MaxSdk.SetUserId("USER_ID");
+                MaxSdk.InitializeSdk();
+                Instance = this;
+                DontDestroyOnLoad(gameObject);        
+            }         
     }
 
     public bool IsInterReady => MaxSdk.IsInterstitialReady(InterAdUnitId);
